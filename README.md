@@ -26,23 +26,27 @@ packet once someone is there to hear it.
 
 ## How it works
 
-The relay listens for magic packets and reacts only to MACs listed in `RELAY_MACS`. For
-each one:
+The relay listens for magic packets and reacts only to MACs listed in `RELAY_MACS`, which
+maps each device to the address it answers on once awake. For each one:
 
 1. **If the host already answers, it does nothing.** The host's own listener saw the packet
    and can act on it — there is nothing to relay.
 2. Otherwise it wakes the host: magic packet to `HOST_MAC`, repeated every `RETRY_EVERY`
    seconds until the host answers on `HOST_PORT`, at most `MAX_RETRIES` times.
-3. Once the host is up, it **replays the original packet**, which the host's listener now
-   receives.
+3. Once the host is up, it **replays the original packet** — repeatedly, until the device
+   itself answers, same retry budget.
 4. A `COOLDOWN` follows before the next trigger is accepted.
 
 If the host never comes up, the device packet is never sent.
 
-The relay knows nothing about the devices beyond their MAC — no addresses, no ports, no
-health checks. What happens after the packet is delivered is the host's business. This
-keeps it agnostic about what runs behind the host: VMs, containers, or anything else with
-a listener that can act on a magic packet.
+Step 3 repeats for a reason: `HOST_PORT` answering only proves the host is reachable, not
+that its WoL listener is running. That usually starts later in the boot, and a magic packet
+nobody listens for is lost. Rather than guess how long that takes, the relay keeps replaying
+until the device confirms it is up.
+
+That is all the relay wants to know about a device: one address to ask "are you there yet".
+What actually brings it up is the host's business, which keeps this agnostic about what runs
+behind the host — VMs, containers, anything with a listener that acts on magic packets.
 
 ### Ports
 
@@ -73,7 +77,8 @@ ignored, and any client may wake a listed device without being registered anywhe
 
 Run it wherever something is always on — a container, a VM, a small always-on box. It needs
 host networking to receive and send LAN broadcasts; from an isolated container network,
-neither works. Binding the default port 9 needs `NET_BIND_SERVICE`, no other privileges.
+neither works. Binding the default port 9 needs `NET_BIND_SERVICE`; using `icmp` checks
+additionally needs `NET_RAW`.
 
 ## Configuration
 
@@ -81,19 +86,30 @@ neither works. Binding the default port 9 needs `NET_BIND_SERVICE`, no other pri
 |---|---|---|---|
 | `HOST` | yes | — | IP or hostname of the sleeping host |
 | `HOST_MAC` | yes | — | MAC of the host NIC that has WoL armed |
-| `RELAY_MACS` | yes | — | comma-separated MACs of devices allowed to wake the host |
+| `RELAY_MACS` | yes | — | comma-separated `MAC=HOST:PORT` of devices allowed to wake the host; `icmp` instead of a port pings |
 | `BROADCAST` | no | `255.255.255.255` | destination address for magic packets |
-| `HOST_PORT` | no | `8006` | TCP port used to check whether the host is up |
+| `HOST_PORT` | no | `8006` | TCP port to check whether the host is up, or `icmp` to ping |
 | `LISTEN_PORT` | no | `9` | port the relay expects magic packets on |
 | `RETRY_EVERY` | no | `15` | seconds between attempts |
-| `MAX_RETRIES` | no | `20` | attempts before giving up |
+| `MAX_RETRIES` | no | `20` | attempts before giving up, per stage |
 | `COOLDOWN` | no | `60` | lockout after a sequence |
 
-MAC notation does not matter (`AA:BB:…`, `aa-bb-…`, `aabb…`), it gets normalised. `HOST`
-may be a name — it is only ever resolved for the health check.
+`RELAY_MACS` maps each device to where it answers once awake, e.g.
+`bb:00:…:01=192.0.2.40:22`. Splitting is unambiguous because a MAC never contains `=`.
+Pick a port that comes up when the device is genuinely usable — SSH, or whatever service
+you are waking it for.
+
+**Write `icmp` instead of a port to ping instead:** `bb:00:…:01=192.0.2.40:icmp`. Useful
+when a device has no reliable port to check, or answers ICMP long before any service is up.
+This works for `HOST_PORT` too, and the two can be mixed freely. Ping shells out to the
+system `ping`, which needs `NET_RAW` in a container — a TCP check needs nothing.
+
+MAC notation does not matter (`AA:BB:…`, `aa-bb-…`, `aabb…`), it gets normalised. Hosts may
+be names — they are only ever resolved for health checks.
 
 `HOST_PORT` should be something that answers once the host is ready to act on packets —
 its management interface, SSH, whatever comes up reliably. The default suits Proxmox VE.
+Note it does not have to prove the host's WoL listener is up; that is what step 3 handles.
 
 `HOST_MAC` inside `RELAY_MACS` is rejected at startup: the relay would see its own wake
 packet and trigger itself.
@@ -106,7 +122,7 @@ With the defaults, waking gives up after five minutes.
 docker run --network host \
   -e HOST=192.0.2.10 \
   -e HOST_MAC=aa:bb:cc:dd:ee:ff \
-  -e RELAY_MACS=11:22:33:44:55:66 \
+  -e RELAY_MACS=11:22:33:44:55:66=192.0.2.40:22 \
   ghcr.io/lorenzlars/wol-relay:1.0.0
 ```
 
