@@ -134,7 +134,7 @@ class TestListen:
             def recvfrom(self, _):
                 if not queue:
                     raise StopIteration
-                return queue.pop(0), ("192.0.2.77", 47009)
+                return queue.pop(0), ("192.0.2.77", 54321)
 
         return FakeSock()
 
@@ -158,6 +158,18 @@ class TestListen:
                          threading.Event(), seen.append)
         assert seen == []
 
+    def test_our_own_replay_cannot_loop(self, cfg, monkeypatch):
+        """We listen and send on port 9, so our replay comes straight back.
+
+        It cannot loop: a replay only goes out once the host is up, and relay()
+        exits immediately while the host is up.
+        """
+        sent = []
+        monkeypatch.setattr(relay, "alive", lambda h, p: True)
+        monkeypatch.setattr(relay, "send_wol", lambda m, b: sent.append(m))
+        assert relay.relay(DEVICE_MAC, cfg) is False
+        assert sent == [], "a trigger while the host is up must send nothing"
+
 
 class TestConfig:
     def env(self, **overrides):
@@ -170,9 +182,12 @@ class TestConfig:
 
     def test_defaults(self):
         cfg = Config.from_env(self.env())
-        assert cfg.listen_port == 47009
+        assert cfg.listen_port == 9, "port 9 is where WoL senders actually send"
         assert cfg.host_port == 8006
         assert cfg.max_retries == 20
+
+    def test_listen_port_can_be_overridden(self):
+        assert Config.from_env(self.env(LISTEN_PORT="47009")).listen_port == 47009
 
     def test_broadcast_defaults_to_limited_broadcast(self):
         assert Config.from_env(self.env()).broadcast == "255.255.255.255"

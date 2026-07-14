@@ -8,11 +8,11 @@ from dataclasses import dataclass
 MAGIC_HEADER = b"\xff" * 6
 MAGIC_SIZE = 102
 
-# Listening and sending on different ports is deliberate: a relay that listens
-# where it sends would receive its own packets and trigger itself in a loop.
-# 9 is where WoL listeners conventionally wait; 47009 is unprivileged and
-# already targeted by many senders.
-LISTEN_PORT = 47009
+# 9 is where WoL senders and listeners conventionally meet, so that is where we
+# do both. Our own packets cannot trigger us: HOST_MAC is barred from
+# RELAY_MACS, and a replay only goes out once the host is up - at which point
+# relay() exits immediately.
+LISTEN_PORT = 9
 SEND_PORT = 9
 
 

@@ -46,16 +46,17 @@ a listener that can act on a magic packet.
 
 ### Ports
 
-By default the relay **listens on 47009 and sends on 9**.
+The relay listens and sends on **port 9** — where WoL senders and listeners conventionally
+meet. It works with whatever already emits your magic packets: `wakeonlan`, `etherwake`,
+your router's web interface, Home Assistant.
 
-Port 9 is where WoL listeners conventionally wait. Listening on a *different* port matters:
-a relay that listens where it sends would receive its own packets and trigger itself in a
-loop. 47009 is the natural second port, because many senders already target it — Moonlight,
-for example, transmits every magic packet to both 9 and 47009, and to every broadcast
-address it can find. It is also unprivileged, so the relay needs no capabilities.
+Listening where it sends means the relay hears its own packets. That cannot loop: the wake
+packet uses `HOST_MAC`, which is barred from `RELAY_MACS`, and a replay only goes out once
+the host is up — at which point a trigger exits straight away with "host already up".
 
-If your sender only ever uses port 9, point `LISTEN_PORT` at some other port it also
-targets, or send a copy there.
+Binding port 9 is privileged. In a container that means `NET_BIND_SERVICE`; nothing else.
+If you would rather not grant it, point `LISTEN_PORT` at an unprivileged port your sender
+also targets — Moonlight, for instance, transmits every magic packet to both 9 and 47009.
 
 ### No allowlist needed
 
@@ -72,7 +73,7 @@ ignored, and any client may wake a listed device without being registered anywhe
 
 Run it wherever something is always on — a container, a VM, a small always-on box. It needs
 host networking to receive and send LAN broadcasts; from an isolated container network,
-neither works.
+neither works. Binding the default port 9 needs `NET_BIND_SERVICE`, no other privileges.
 
 ## Configuration
 
@@ -83,7 +84,7 @@ neither works.
 | `RELAY_MACS` | yes | — | comma-separated MACs of devices allowed to wake the host |
 | `BROADCAST` | no | `255.255.255.255` | destination address for magic packets |
 | `HOST_PORT` | no | `8006` | TCP port used to check whether the host is up |
-| `LISTEN_PORT` | no | `47009` | port the relay expects magic packets on |
+| `LISTEN_PORT` | no | `9` | port the relay expects magic packets on |
 | `RETRY_EVERY` | no | `15` | seconds between attempts |
 | `MAX_RETRIES` | no | `20` | attempts before giving up |
 | `COOLDOWN` | no | `60` | lockout after a sequence |
